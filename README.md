@@ -30,6 +30,7 @@ Run `phoenixquant --help` to see the full list of options.
 src/phoenixquant/
 ├── __init__.py
 ├── bot.py
+├── app.py
 ├── config.py
 ├── feeds.py
 ├── indicators.py
@@ -38,6 +39,8 @@ src/phoenixquant/
 ```
 
 - `config.py` holds dataclasses and parameter presets.
+- `app.py` coordinates the exchange, realtime feeds, and bot lifecycle using an async
+  context manager.
 - `bot.py` contains the core state machine and trading logic with detailed logging of
   trigger evaluations and order management.
 - `feeds.py` manages realtime public and private websocket streams.

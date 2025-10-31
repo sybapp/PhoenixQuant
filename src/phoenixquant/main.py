@@ -5,13 +5,11 @@ import argparse
 import asyncio
 import logging
 import os
-from typing import Optional
 
 import ccxt
 
-from .bot import ElasticDipBot
+from .app import PhoenixQuantApp
 from .config import PARAM_PRESETS, BotParameters
-from .feeds import RealtimeFeed, UserStream
 from .logging_config import setup_logging
 
 
@@ -64,35 +62,21 @@ async def _run_bot(args: argparse.Namespace) -> None:
         }
     )
 
+    poll_logger = logging.getLogger("phoenixquant.bot")
     feed_logger = logging.getLogger("phoenixquant.feed")
-    public_feed = RealtimeFeed(args.stream_symbol, params.liq_window_sec, logger=feed_logger)
-    await public_feed.start()
+    user_logger = logging.getLogger("phoenixquant.user_stream")
 
-    bot = ElasticDipBot(
-        exchange,
-        args.symbol,
-        params,
-        public_feed,
-        None,
+    async with PhoenixQuantApp(
+        exchange=exchange,
+        symbol=args.symbol,
+        stream_symbol=args.stream_symbol,
+        params=params,
         dry_run=args.dry_run,
-    )
-    await bot.init_market()
-
-    user_stream: Optional[UserStream] = None
-    if not args.dry_run:
-        user_logger = logging.getLogger("phoenixquant.user_stream")
-        user_stream = UserStream(exchange, bot.on_user_event, logger=user_logger)
-        await user_stream.start()
-        bot.user_stream = user_stream
-
-    try:
-        while True:
-            await bot.step()
-            await asyncio.sleep(params.poll_sec)
-    finally:
-        if user_stream:
-            await user_stream.stop()
-        await public_feed.stop()
+        poll_logger=poll_logger,
+        feed_logger=feed_logger,
+        user_logger=user_logger,
+    ) as app:
+        await app.run_forever()
 
 
 def main() -> None:

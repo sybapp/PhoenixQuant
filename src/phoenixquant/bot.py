@@ -4,16 +4,39 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
 import ccxt
 
 from .config import BotParameters
-from .indicators import ema, rsi, volume_recovered
 from .feeds import RealtimeFeed, UserStream
+from .indicators import ema, rsi, volume_recovered
 
-logger = logging.getLogger(__name__)
+
+@dataclass(slots=True)
+class OrderLayer:
+    """Representation of a single ladder order."""
+
+    price: float
+    qty: float
+    id: Optional[str] = None
+    filled: bool = False
+
+
+@dataclass(slots=True)
+class PositionSnapshot:
+    """Aggregate view of the currently filled layers."""
+
+    quantity: float = 0.0
+    avg_entry: float = 0.0
+    lowest_fill: Optional[float] = None
+
+    def reset(self) -> None:
+        self.quantity = 0.0
+        self.avg_entry = 0.0
+        self.lowest_fill = None
 
 
 class State(Enum):
@@ -35,6 +58,7 @@ class ElasticDipBot:
         user_stream: Optional[UserStream],
         *,
         dry_run: bool,
+        logger: Optional[logging.Logger] = None,
     ) -> None:
         self.exchange = exchange
         self.symbol = symbol
@@ -42,32 +66,31 @@ class ElasticDipBot:
         self.feed = public_feed
         self.user_stream = user_stream
         self.dry_run = dry_run
+        self.logger = logger or logging.getLogger(__name__)
 
         self.state = State.IDLE
         self.reference_price: Optional[float] = None
         self.trigger_time: Optional[float] = None
 
         self.market: Optional[Dict[str, Any]] = None
-        self.attack_orders: List[Dict[str, Any]] = []
-        self.filled_orders: List[Dict[str, Any]] = []
+        self.attack_orders: List[OrderLayer] = []
+        self.filled_orders: List[OrderLayer] = []
         self.break_time: Optional[float] = None
 
-        self.position_qty = 0.0
-        self.avg_entry = 0.0
-        self.lowest_fill: Optional[float] = None
+        self.position = PositionSnapshot()
 
     async def init_market(self) -> None:
-        logger.info("Loading exchange markets", extra={"symbol": self.symbol})
+        self.logger.info("Loading exchange markets", extra={"symbol": self.symbol})
         await self._ccxt_async(self.exchange.load_markets)
         self.market = self.exchange.market(self.symbol)
-        logger.info("Loaded market metadata", extra={"market": self.market})
+        self.logger.info("Loaded market metadata", extra={"market": self.market})
 
     async def _ccxt_async(self, func, *args, **kwargs):
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
 
     async def fetch_candles(self, limit: int = 240):
-        logger.debug("Fetching candles", extra={"limit": limit, "timeframe": self.params.timeframe})
+        self.logger.debug("Fetching candles", extra={"limit": limit, "timeframe": self.params.timeframe})
         return await self._ccxt_async(
             self.exchange.fetch_ohlcv,
             self.symbol,
@@ -78,7 +101,7 @@ class ElasticDipBot:
     async def fetch_price(self) -> float:
         ticker = await self._ccxt_async(self.exchange.fetch_ticker, self.symbol)
         price = ticker["bid"]
-        logger.debug("Fetched bid price", extra={"price": price})
+        self.logger.debug("Fetched bid price", extra={"price": price})
         return price
 
     # ---- signals ----
@@ -92,7 +115,7 @@ class ElasticDipBot:
         highest = max(entry[2] for entry in sub_window)
         window_drop = (highest - sub_window[-1][4]) / highest * 100 >= self.params.drop_pct_window
         result = single_drop or window_drop
-        logger.debug(
+        self.logger.debug(
             "Fast drop evaluation",
             extra={
                 "single_drop": single_drop,
@@ -118,7 +141,7 @@ class ElasticDipBot:
             and ema_fast_last - ema_fast_prev < 0
             and ema_slow_last - ema_slow_prev < 0
         )
-        logger.debug(
+        self.logger.debug(
             "Trend down evaluation",
             extra={
                 "ema_fast_last": float(ema_fast_last),
@@ -136,7 +159,7 @@ class ElasticDipBot:
             return False
         average_volume = float(sum(volumes[-10:]) / 10.0)
         result = volumes[-1] < average_volume * self.params.vol_shrink_ratio
-        logger.debug(
+        self.logger.debug(
             "Volume dry evaluation",
             extra={
                 "last_volume": volumes[-1],
@@ -151,7 +174,7 @@ class ElasticDipBot:
         closes = [candle[4] for candle in candles]
         value = rsi(closes, self.params.rsi_period)
         result = not (value != value) and value < self.params.rsi_oversold
-        logger.debug(
+        self.logger.debug(
             "RSI evaluation",
             extra={
                 "rsi_value": float(value),
@@ -164,7 +187,7 @@ class ElasticDipBot:
     def is_liquidation_spike(self) -> bool:
         notional_sum = self.feed.get_liq_notional_sum()
         result = notional_sum >= self.params.liq_notional_threshold
-        logger.debug(
+        self.logger.debug(
             "Liquidation spike evaluation",
             extra={
                 "notional_sum": notional_sum,
@@ -176,7 +199,7 @@ class ElasticDipBot:
 
     def is_funding_extreme(self) -> bool:
         result = self.feed.funding_rate <= self.params.funding_extreme_neg
-        logger.debug(
+        self.logger.debug(
             "Funding rate evaluation",
             extra={
                 "funding_rate": self.feed.funding_rate,
@@ -197,7 +220,7 @@ class ElasticDipBot:
         price = self._round_price(price)
         qty = self._round_amount(qty)
         if self.dry_run:
-            logger.info("(Dry) placing limit buy", extra={"qty": qty, "price": price})
+            self.logger.info("(Dry) placing limit buy", extra={"qty": qty, "price": price})
             return {"id": f"DRY_BUY_{price}"}
         order = await self._ccxt_async(
             self.exchange.create_order,
@@ -208,14 +231,14 @@ class ElasticDipBot:
             price,
             {"timeInForce": "GTC", "reduceOnly": False, "positionSide": "BOTH"},
         )
-        logger.info("Placed limit buy", extra={"order": order})
+        self.logger.info("Placed limit buy", extra={"order": order})
         return order
 
     async def _place_limit_sell(self, price: float, qty: float):
         price = self._round_price(price)
         qty = self._round_amount(qty)
         if self.dry_run:
-            logger.info("(Dry) placing limit sell", extra={"qty": qty, "price": price})
+            self.logger.info("(Dry) placing limit sell", extra={"qty": qty, "price": price})
             return {"id": f"DRY_SELL_{price}"}
         order = await self._ccxt_async(
             self.exchange.create_order,
@@ -226,13 +249,13 @@ class ElasticDipBot:
             price,
             {"timeInForce": "GTC", "reduceOnly": True, "positionSide": "BOTH"},
         )
-        logger.info("Placed limit sell", extra={"order": order})
+        self.logger.info("Placed limit sell", extra={"order": order})
         return order
 
     async def _place_stop_market_close(self, stop_price: float):
         stop_price = self._round_price(stop_price)
         if self.dry_run:
-            logger.info("(Dry) placing stop market", extra={"stop_price": stop_price})
+            self.logger.info("(Dry) placing stop market", extra={"stop_price": stop_price})
             return {"id": f"DRY_SL_{stop_price}"}
         order = await self._ccxt_async(
             self.exchange.create_order,
@@ -248,14 +271,14 @@ class ElasticDipBot:
                 "workingType": "MARK_PRICE",
             },
         )
-        logger.info("Placed stop market", extra={"order": order})
+        self.logger.info("Placed stop market", extra={"order": order})
         return order
 
-    async def compute_attack_plan(self, current_price: float) -> List[Dict[str, Any]]:
+    async def compute_attack_plan(self, current_price: float) -> List[OrderLayer]:
         balance = await self._ccxt_async(self.exchange.fetch_balance)
         usdt = balance["USDT"]["free"]
         max_capital = min(self.params.total_capital, usdt * self.params.max_account_ratio)
-        logger.info(
+        self.logger.info(
             "Computed capital allocation",
             extra={
                 "free_usdt": usdt,
@@ -264,13 +287,13 @@ class ElasticDipBot:
                 "max_account_ratio": self.params.max_account_ratio,
             },
         )
-        plan: List[Dict[str, Any]] = []
+        plan: List[OrderLayer] = []
         for drop_pct, ratio in zip(self.params.layer_pcts, self.params.layer_pos_ratio):
             price = current_price * (1 - drop_pct / 100.0)
             capital = max_capital * ratio
             qty = capital / price if price > 0 else 0.0
-            plan.append({"price": price, "qty": qty, "id": None, "filled": False})
-            logger.debug(
+            plan.append(OrderLayer(price=price, qty=qty))
+            self.logger.debug(
                 "Layer prepared",
                 extra={
                     "drop_pct": drop_pct,
@@ -284,21 +307,19 @@ class ElasticDipBot:
 
     def _recalc_position(self) -> None:
         if not self.filled_orders:
-            self.position_qty = 0.0
-            self.avg_entry = 0.0
-            self.lowest_fill = None
+            self.position.reset()
             return
-        total_qty = sum(order["qty"] for order in self.filled_orders)
-        total_cost = sum(order["qty"] * order["price"] for order in self.filled_orders)
-        self.position_qty = total_qty
-        self.avg_entry = total_cost / total_qty if total_qty > 0 else 0.0
-        self.lowest_fill = min(order["price"] for order in self.filled_orders)
-        logger.info(
+        total_qty = sum(order.qty for order in self.filled_orders)
+        total_cost = sum(order.qty * order.price for order in self.filled_orders)
+        self.position.quantity = total_qty
+        self.position.avg_entry = total_cost / total_qty if total_qty > 0 else 0.0
+        self.position.lowest_fill = min(order.price for order in self.filled_orders)
+        self.logger.info(
             "Recalculated position",
             extra={
-                "position_qty": self.position_qty,
-                "avg_entry": self.avg_entry,
-                "lowest_fill": self.lowest_fill,
+                "position_qty": self.position.quantity,
+                "avg_entry": self.position.avg_entry,
+                "lowest_fill": self.position.lowest_fill,
             },
         )
 
@@ -317,7 +338,7 @@ class ElasticDipBot:
             filled_qty = float(order_data.get("z", "0") or 0.0)
             order_id = order_data.get("i")
 
-            logger.info(
+            self.logger.info(
                 "Order trade update received",
                 extra={
                     "status": status,
@@ -331,72 +352,81 @@ class ElasticDipBot:
             )
 
             if status in ("FILLED", "PARTIALLY_FILLED") and side == "BUY":
-                match = None
-                if self.attack_orders:
-                    match = min(self.attack_orders, key=lambda order: abs(order["price"] - price))
+                match: Optional[OrderLayer] = None
+                candidates = [order for order in self.attack_orders if not order.filled]
+                if candidates:
+                    match = min(candidates, key=lambda order: abs(order.price - price))
                 filled_price = avg_price if avg_price > 0 else price
                 filled_quantity = filled_qty if filled_qty > 0 else quantity
                 if match:
-                    match.update(
-                        {
-                            "filled": True,
-                            "id": order_id,
-                            "price": filled_price,
-                            "qty": filled_quantity,
-                        }
-                    )
+                    match.filled = True
+                    match.id = order_id
+                    match.price = filled_price
+                    match.qty = filled_quantity
                     if match not in self.filled_orders:
                         self.filled_orders.append(match)
                 else:
                     self.filled_orders.append(
-                        {
-                            "id": order_id,
-                            "price": filled_price,
-                            "qty": filled_quantity,
-                            "filled": True,
-                        }
+                        OrderLayer(
+                            id=order_id,
+                            price=filled_price,
+                            qty=filled_quantity,
+                            filled=True,
+                        )
                     )
                 self._recalc_position()
 
                 if self.state in (State.WAIT_ORDERS, State.MANAGE):
-                    tp = self.avg_entry * (1 + self.params.take_profit_pct / 100.0)
+                    tp = self.position.avg_entry * (1 + self.params.take_profit_pct / 100.0)
                     sl = (
-                        self.lowest_fill * (1 - self.params.hard_stop_extra / 100.0)
-                        if self.lowest_fill
+                        self.position.lowest_fill * (1 - self.params.hard_stop_extra / 100.0)
+                        if self.position.lowest_fill
                         else None
                     )
                     if sl:
-                        await self._place_limit_sell(tp, self.position_qty * 0.5)
+                        await self._place_limit_sell(tp, self.position.quantity * 0.5)
                         await self._place_stop_market_close(sl)
                         self.state = State.MANAGE
-                        logger.info(
+                        self.logger.info(
                             "Manage state setup",
                             extra={
-                                "avg_entry": self.avg_entry,
+                                "avg_entry": self.position.avg_entry,
                                 "take_profit": tp,
                                 "stop_loss": sl,
                             },
                         )
         elif event_type == "ACCOUNT_UPDATE":
-            logger.debug("Account update event", extra={"data": data})
+            self.logger.debug("Account update event", extra={"data": data})
 
     async def step(self) -> None:
         candles = await self.fetch_candles()
 
         if self.state == State.IDLE:
-            if self.is_trend_down(candles) and self.is_volume_dry(candles):
-                logger.info("Skipping due to downtrend with dry volume")
+            trend_down = self.is_trend_down(candles)
+            volume_dry = self.is_volume_dry(candles)
+            if trend_down and volume_dry:
+                self.logger.info("Skipping due to downtrend with dry volume")
                 return
-            if (
-                self.is_fast_drop(candles)
-                and self.is_oversold(candles)
-                and self.is_liquidation_spike()
-                and self.is_funding_extreme()
-            ):
+            fast_drop = self.is_fast_drop(candles)
+            oversold = self.is_oversold(candles)
+            liq_spike = self.is_liquidation_spike()
+            funding_extreme = self.is_funding_extreme()
+            self.logger.debug(
+                "Signal snapshot",
+                extra={
+                    "trend_down": trend_down,
+                    "volume_dry": volume_dry,
+                    "fast_drop": fast_drop,
+                    "oversold": oversold,
+                    "liq_spike": liq_spike,
+                    "funding_extreme": funding_extreme,
+                },
+            )
+            if fast_drop and oversold and liq_spike and funding_extreme:
                 self.reference_price = await self.fetch_price()
                 self.trigger_time = time.time()
                 self.state = State.WAIT_FOR_BOUNCE
-                logger.info(
+                self.logger.info(
                     "Trigger detected; waiting for bounce",
                     extra={"reference_price": self.reference_price},
                 )
@@ -404,7 +434,7 @@ class ElasticDipBot:
 
         elif self.state == State.WAIT_FOR_BOUNCE:
             if time.time() - (self.trigger_time or 0) > self.params.delayed_window_sec:
-                logger.info("Delayed window expired, resetting")
+                self.logger.info("Delayed window expired, resetting")
                 await self.reset()
                 return
             price = await self.fetch_price()
@@ -418,7 +448,7 @@ class ElasticDipBot:
                 ratio=self.params.vol_recover_ratio,
                 tick_ratio=self.params.tick_vol_ratio,
             )
-            logger.debug(
+            self.logger.debug(
                 "Bounce evaluation",
                 extra={"price_ok": price_ok, "volume_ok": volume_ok, "price": price},
             )
@@ -426,28 +456,28 @@ class ElasticDipBot:
                 plan = await self.compute_attack_plan(price)
                 self.attack_orders = plan
                 for order in plan:
-                    response = await self._place_limit_buy(order["price"], order["qty"])
-                    order["id"] = response.get("id")
+                    response = await self._place_limit_buy(order.price, order.qty)
+                    order.id = response.get("id")
                 self.state = State.WAIT_ORDERS
                 self.break_time = None
-                logger.info("Placed ladder orders", extra={"count": len(plan)})
+                self.logger.info("Placed ladder orders", extra={"count": len(plan)})
                 return
 
         elif self.state == State.WAIT_ORDERS:
-            if self.lowest_fill:
+            if self.position.lowest_fill:
                 price = await self.fetch_price()
-                stop_loss = self.lowest_fill * (1 - self.params.hard_stop_extra / 100.0)
+                stop_loss = self.position.lowest_fill * (1 - self.params.hard_stop_extra / 100.0)
                 if price <= stop_loss:
                     if self.break_time is None:
                         self.break_time = time.time()
                     elif time.time() - self.break_time >= self.params.sl_time_grace_sec:
-                        logger.warning("Stop loss guard triggered; resetting")
+                        self.logger.warning("Stop loss guard triggered; resetting")
                         await self.reset()
                 else:
                     self.break_time = None
 
         elif self.state == State.MANAGE:
-            if self.position_qty <= 0:
+            if self.position.quantity <= 0:
                 await self.reset()
 
     async def reset(self) -> None:
@@ -456,9 +486,7 @@ class ElasticDipBot:
         self.trigger_time = None
         self.attack_orders.clear()
         self.filled_orders.clear()
-        self.position_qty = 0.0
-        self.avg_entry = 0.0
-        self.lowest_fill = None
+        self.position.reset()
         self.break_time = None
-        logger.info("Bot state reset", extra={"state": self.state.name})
+        self.logger.info("Bot state reset", extra={"state": self.state.name})
 
