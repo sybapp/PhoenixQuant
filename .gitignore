@@ -1,0 +1,16 @@
+uv.lock
+.venv
+*.egg-info/
+__pycache__/
+
+# 回测相关文件
+backtest_data_*.csv
+backtest_result_*.png
+backtest_report_*.xlsx
+
+# 日志文件
+*.log
+
+# 临时文件
+*.tmp
+.DS_Store
