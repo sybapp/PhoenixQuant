@@ -473,7 +473,7 @@ async def get_backtest_data(symbol: str, start_time: datetime, end_time: datetim
     data_fetcher = HistoricalDataFetcher(exchange, use_testnet=True)
     
     try:
-        data_file = f"backtest_data_{symbol.replace('/', '_')}_{start_time.strftime('%Y%m%d')}_{end_time.strftime('%Y%m%d')}.csv"
+        data_file = f"backtest_data_{symbol.replace('/', '_')}_{TIMEFRAME}_{start_time.strftime('%Y%m%d')}_{end_time.strftime('%Y%m%d')}.csv"
         
         if os.path.exists(data_file):
             print(f"从缓存文件加载数据: {data_file}")

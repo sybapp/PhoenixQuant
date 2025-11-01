@@ -87,7 +87,7 @@ async def run_backtest():
     try:
         # 尝试从文件加载数据（可选）
         import os
-        data_file = f"backtest_data_{SYMBOL.replace('/', '_')}_{BACKTEST_START.strftime('%Y%m%d')}_{BACKTEST_END.strftime('%Y%m%d')}.csv"
+        data_file = f"backtest_data_{SYMBOL.replace('/', '_')}_{TIMEFRAME}_{BACKTEST_START.strftime('%Y%m%d')}_{BACKTEST_END.strftime('%Y%m%d')}.csv"
 
         if os.path.exists(data_file):
             print(f"从缓存文件加载数据: {data_file}")
