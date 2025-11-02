@@ -1,0 +1,56 @@
+symbol: "BTC/USDT"
+timeframe: "1m"
+
+engine:
+  initial_balance: 10000
+  maker_fee: 0.0002
+  taker_fee: 0.0004
+
+data:
+  source: binance
+  use_testnet: true
+  limit: 1000
+
+window:
+  start: "2024-01-01T00:00:00"
+  end: "2024-01-07T00:00:00"
+
+strategy:
+  timeframe: "1m"
+  drop_single_pct: 0.8
+  drop_window_pct: 2.5
+  drop_window: 10
+  delayed_trigger_pct: 0.6
+  delayed_window_minutes: 360
+  ema_fast: 21
+  ema_slow: 55
+  rsi_period: 14
+  rsi_oversold: 28.0
+  volume_short: 5
+  volume_long: 20
+  volume_recover_ratio: 1.15
+  volume_tick_ratio: 1.30
+  volatility_window: 30
+  min_signal: 60
+  scale_multiplier: 1.0
+  trail_step_pct: 0.3
+  layers:
+    - offset_pct: 0.8
+      size_ratio: 0.15
+    - offset_pct: 1.4
+      size_ratio: 0.2
+    - offset_pct: 2.1
+      size_ratio: 0.25
+    - offset_pct: 2.9
+      size_ratio: 0.2
+    - offset_pct: 3.6
+      size_ratio: 0.2
+  risk:
+    max_account_ratio: 0.3
+    take_profit_pct: 1.2
+    hard_stop_pct: 2.4
+    trailing_pct: 0.7
+    trailing_activation_pct: 1.5
+    cooldown_minutes: 45
+    max_concurrent_trades: 1
+    max_hold_minutes: 720
