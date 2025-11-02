@@ -21,15 +21,32 @@ class HistoricalDataLoader:
     config: BacktestConfig
 
     def load(self) -> pd.DataFrame:
-        data_cfg = self.config.data
-        cache = data_cfg.cache
+        cache = self._resolve_cache_path()
         if cache and cache.exists():
             return self._load_from_cache(cache)
-        df = self._fetch_from_exchange()
+
+        try:
+            df = self._fetch_from_exchange()
+        except ccxt.NetworkError as exc:
+            raise RuntimeError("从币安测试网下载K线数据失败，请检查网络连接或提供缓存文件") from exc
+
         if cache:
             cache.parent.mkdir(parents=True, exist_ok=True)
             df.to_csv(cache, index=False)
         return df
+
+    def _resolve_cache_path(self) -> Path | None:
+        data_cfg = self.config.data
+        if data_cfg.cache:
+            return data_cfg.cache
+
+        if data_cfg.use_testnet and data_cfg.source.lower() == "binance":
+            symbol_slug = self.config.symbol.replace("/", "").lower()
+            default_cache = Path("data") / "binance_testnet" / f"{symbol_slug}_{self.config.timeframe}.csv"
+            data_cfg.cache = default_cache
+            return default_cache
+
+        return None
 
     def _load_from_cache(self, path: Path) -> pd.DataFrame:
         df = pd.read_csv(path)

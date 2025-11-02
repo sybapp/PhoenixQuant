@@ -30,7 +30,7 @@ pip install -e .
 所有参数均放置在 `configs/elastic_dip.yaml` 中，可根据需要复制多份配置文件。配置主要分为以下几部分：
 
 - `engine`：初始资金与手续费设置。
-- `data`：历史数据来源、缓存路径及抓取限制。
+- `data`：历史数据来源、缓存策略及抓取限制；对币安测试网会自动保存到 `data/binance_testnet/`。
 - `window`：回测时间范围（ISO 时间）。
 - `strategy`：策略细节，包括触发条件、分层挂单及风险控制。
 
@@ -59,7 +59,7 @@ python run_backtest.py --config configs/elastic_dip.yaml
 
 脚本会自动：
 
-1. 加载配置并抓取/读取历史数据（仓库已附带 `data/btcusdt_1m.csv`，离线环境可直接使用缓存）。
+1. 加载配置并抓取/读取历史数据（默认会尝试从币安测试网下载，如无法联网则读取 `data/binance_testnet/btcusdt_1m.csv` 缓存）。
 2. 使用重构后的撮合引擎执行弹性抄底策略。
 3. 输出核心统计指标（收益率、最大回撤、胜率等）。
 

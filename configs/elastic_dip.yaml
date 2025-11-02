@@ -10,7 +10,6 @@ data:
   source: binance
   use_testnet: true
   limit: 1000
-  cache: data/btcusdt_1m.csv
 
 window:
   start: "2024-01-01T00:00:00"
