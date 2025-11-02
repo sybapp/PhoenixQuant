@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 try:  # pragma: no cover - 按需降级解析
     import yaml  # type: ignore
@@ -30,6 +30,21 @@ class EngineConfig:
     initial_balance: float = 10_000.0
     maker_fee: float = 0.0002
     taker_fee: float = 0.0004
+    leverage: float = 1.0
+
+
+@dataclass
+class ExchangeConfig:
+    """实盘交易所连接配置"""
+
+    exchange_id: str = "binance"
+    api_key: str = ""
+    secret: str = ""
+    password: Optional[str] = None
+    enable_rate_limit: bool = True
+    options: Dict[str, Any] = field(default_factory=dict)
+    params: Dict[str, Any] = field(default_factory=dict)
+    leverage: float = 1.0
 
 
 @dataclass
@@ -81,6 +96,18 @@ class StrategyConfig:
 
 
 @dataclass
+class LiveSettings:
+    """实盘运行参数"""
+
+    poll_interval: float = 30.0
+    warmup_bars: int = 500
+    backfill_limit: int = 1000
+    enable_trading: bool = True
+    dry_run: bool = False
+    heartbeat_interval: float = 120.0
+
+
+@dataclass
 class BacktestWindow:
     """回测时间窗口"""
 
@@ -98,6 +125,19 @@ class BacktestConfig:
     strategy: StrategyConfig
     data: DataSourceConfig
     window: BacktestWindow
+
+
+@dataclass
+class LiveTradingConfig:
+    """实盘交易配置"""
+
+    symbol: str
+    timeframe: str
+    engine: EngineConfig
+    strategy: StrategyConfig
+    data: DataSourceConfig
+    exchange: ExchangeConfig
+    settings: LiveSettings
 
 
 def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -275,4 +315,52 @@ def load_config(path: str | Path) -> BacktestConfig:
         strategy=strategy,
         data=data_config,
         window=window,
+    )
+
+
+def _dict_or_empty(value: Optional[dict]) -> Dict[str, Any]:
+    if value is None:
+        return {}
+    return dict(value)
+
+
+def load_live_config(path: str | Path) -> LiveTradingConfig:
+    """加载实盘交易配置"""
+
+    path = Path(path)
+    raw = _load_yaml(path)
+
+    engine = EngineConfig(**raw["engine"])
+
+    strategy_dict = raw["strategy"].copy()
+    risk_cfg = strategy_dict.get("risk", {})
+    strategy_dict["risk"] = RiskConfig(**risk_cfg)
+    strategy_dict["layers"] = _ensure_layers(strategy_dict.get("layers", []))
+    strategy = StrategyConfig(**strategy_dict)
+
+    data_cfg = raw.get("data", {})
+    if data_cfg.get("cache"):
+        data_cfg["cache"] = Path(data_cfg["cache"])
+    data = DataSourceConfig(**data_cfg)
+
+    exchange_cfg = raw.get("exchange", {})
+    exchange_cfg = exchange_cfg.copy()
+    exchange_id = exchange_cfg.pop("id", None)
+    if exchange_id:
+        exchange_cfg["exchange_id"] = exchange_id
+    exchange_cfg["options"] = _dict_or_empty(exchange_cfg.get("options"))
+    exchange_cfg["params"] = _dict_or_empty(exchange_cfg.get("params"))
+    exchange = ExchangeConfig(**exchange_cfg)
+
+    settings_cfg = raw.get("live", raw.get("settings", {})) or {}
+    settings = LiveSettings(**settings_cfg)
+
+    return LiveTradingConfig(
+        symbol=raw["symbol"],
+        timeframe=raw.get("timeframe", strategy.timeframe),
+        engine=engine,
+        strategy=strategy,
+        data=data,
+        exchange=exchange,
+        settings=settings,
     )
