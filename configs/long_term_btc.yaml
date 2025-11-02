@@ -1,0 +1,59 @@
+# 回测标的与基础周期
+symbol: "BTC/USDT"          # 目标交易对，决定行情数据路径
+timeframe: "1m"             # 策略工作周期（与数据分辨率保持一致）
+
+# 回测账户与手续费设定
+engine:
+  initial_balance: 10000    # 初始资金，影响权益曲线起点
+  maker_fee: 0.0002         # 成交为挂单时的手续费率
+  taker_fee: 0.0005         # 成交为吃单时的手续费率
+  leverage: 3               # 全局杠杆倍数（1 表示现货，无杠杆）
+
+# 数据来源与缓存配置
+data:
+  source: binance           # 历史数据来源交易所
+  use_testnet: true         # 是否使用交易所测试网规则
+  limit: 1000               # 每次拉取K线的最大条数
+  cache: "data/binance_testnet/btcusdt_BTC/USDT_1m_20250101_20251031.csv"  # 本地缓存CSV，避免重复联网
+
+# 回测时间窗口
+window:
+  start: "2025-01-01T00:00:00"  # 回测开始时间（含）
+  end: "2025-10-31T00:00:00"    # 回测结束时间（含）
+
+# 策略参数区
+strategy:
+  timeframe: "1m"           # 策略内部计算所用周期
+  drop_single_pct: 1.0      # 单根K线跌幅触发阈值（百分比）
+  drop_window_pct: 3.0      # 统计窗口内跌幅阈值（百分比）
+  drop_window: 12           # 跌幅统计窗口长度（bar 数）
+  delayed_trigger_pct: 0.6  # 当日内低点相对收盘的额外触发阈值
+  delayed_window_minutes: 360  # 触发信号后，撤单/超时检查窗口（分钟）
+  ema_fast: 21              # 快速 EMA 周期
+  ema_slow: 55              # 慢速 EMA 周期（用作趋势滤波）
+  rsi_period: 14            # RSI 指标周期
+  rsi_oversold: 25.0        # RSI 超卖阈值
+  volume_short: 5           # 成交量短均线窗口
+  volume_long: 20           # 成交量长均线窗口
+  volume_recover_ratio: 1.18   # 短均线需相对长均线放大的倍数
+  volume_tick_ratio: 1.32      # 单根成交量相对长均线的放大倍数
+  volatility_window: 30     # 波动率估计窗口（用于drop标准化）
+  min_signal: 82            # 综合信号分数阈值（达到即布单）
+  scale_multiplier: 0.45    # 账户资金使用放大系数（配合 max_account_ratio）
+  trail_step_pct: 0.3       # 移动止盈每次抬升的步长（百分比）
+  layers:                   # 分层挂单定义（越深折价越大，仓位越重）
+    - offset_pct: 1.0       # 第一层相对当前价的折扣百分比
+      size_ratio: 0.3       # 第一层分配资金比例
+    - offset_pct: 1.8
+      size_ratio: 0.35
+    - offset_pct: 2.6
+      size_ratio: 0.35
+  risk:                     # 风控相关阈值
+    max_account_ratio: 0.07     # 单次布单可动用的账户资金上限
+    take_profit_pct: 1.1        # 触发固定止盈的利润百分比
+    hard_stop_pct: 1.6          # 触发硬止损的亏损百分比
+    trailing_pct: 0.5           # 移动止盈回撤阈值
+    trailing_activation_pct: 1.1  # 移动止盈激活所需浮盈
+    cooldown_minutes: 90        # 每次平仓后的冷却时长
+    max_concurrent_trades: 1    # 并行仓位上限（现阶段锁一笔）
+    max_hold_minutes: 600       # 单笔最长持仓时间，超时强平

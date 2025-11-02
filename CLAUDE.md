@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-PhoenixQuant is a lightweight cryptocurrency backtesting framework focused on "elastic dip buying" strategies. The codebase is in Chinese with English code structure. The framework implements an event-driven backtest engine that executes layered limit orders during market dips.
+PhoenixQuant is a lightweight cryptocurrency backtesting and live trading framework focused on "elastic dip buying" strategies. The codebase is in Chinese with English code structure. The framework implements an event-driven backtest engine that executes layered limit orders during market dips, with support for both backtesting and live trading.
 
 ## Installation & Setup
 
@@ -13,14 +13,51 @@ PhoenixQuant is a lightweight cryptocurrency backtesting framework focused on "e
 pip install -e .
 ```
 
-## Running Backtests
+## Commands
 
+### Backtesting
 ```bash
 # Run backtest with default config
 python run_backtest.py
 
 # Run with custom config
 python run_backtest.py --config configs/elastic_dip.yaml
+
+# Batch backtest multiple configs
+python batch_backtest.py
+
+# Multi-asset backtest
+python multi_asset_backtest.py
+```
+
+### Live Trading
+```bash
+# Run live trading (requires API keys in config)
+python run_live_trading.py --config configs/live_template.yaml
+
+# Dry-run mode (no real orders)
+python run_live_trading.py --config configs/live_template.yaml --dry-run
+
+# With custom log level
+python run_live_trading.py --config configs/live_template.yaml --log DEBUG
+```
+
+### Visualization & Analysis
+```bash
+# Visualize backtest results
+python visualize_backtest.py --config configs/elastic_dip.yaml
+
+# View detailed trade breakdown
+python view_backtest_details.py --config configs/elastic_dip.yaml
+
+# Compare multiple backtests
+python visualize_comparison.py
+
+# Generate optimization report
+python generate_optimization_report.py
+
+# Profile backtest performance
+python profile_backtest.py
 ```
 
 ## Architecture
@@ -38,6 +75,7 @@ python run_backtest.py --config configs/elastic_dip.yaml
 
 **phoenix_quant/**
 - `config.py` - Configuration dataclasses and YAML parsing (includes fallback parser when PyYAML unavailable)
+- `live.py` - Live trading implementation with real-time data feed and order execution
 
 ### Strategy Logic Flow
 
@@ -63,10 +101,22 @@ python run_backtest.py --config configs/elastic_dip.yaml
 
 ### Configuration Structure
 
-All parameters in `configs/elastic_dip.yaml`:
-- `engine`: Initial balance, fees
+All parameters in YAML config files under `configs/`:
+
+**Backtest configs:**
+- `elastic_dip.yaml` - Default backtest configuration
+- `opt_*.yaml` - Optimized parameter sets (balanced, comprehensive, risk_control, etc.)
+- `long_term_*.yaml` - Long-term backtest configs for different assets (BTC, ETH, BNB, XRP, DOGE)
+
+**Live trading configs:**
+- `live_template.yaml` - Template for live trading (copy and add API keys)
+
+**Configuration sections:**
+- `engine`: Initial balance, fees, leverage
 - `data`: Exchange source (Binance testnet), caching, data limits
-- `window`: Backtest time range (ISO format)
+- `window`: Backtest time range (ISO format) - only for backtesting
+- `exchange`: API keys and exchange settings - only for live trading
+- `live`: Polling interval, warmup bars, dry-run mode - only for live trading
 - `strategy`: Signal thresholds, EMA/RSI periods, layers, risk controls
 
 Layers defined as:
@@ -92,6 +142,19 @@ layers:
 - Maintains weighted average entry price
 - Calculates realized PnL on position reduction
 - Updates timestamp on each trade
+
+**Live Trading Architecture** (`phoenix_quant/live.py`):
+- `LiveDataFeed`: Poll-based real-time OHLCV data with backfill support
+- `ExchangeExecutor`: Wraps CCXT for order placement and management
+- `LiveTrader`: Main orchestrator that runs the strategy loop with real-time data
+- Supports dry-run mode for testing without placing real orders
+- Heartbeat logging for monitoring system health
+
+**Dual-Mode Design**:
+The same `ElasticDipStrategy` class works in both backtest and live modes:
+- Backtest: Uses `BacktestEngine` for simulated order matching
+- Live: Uses `ExchangeExecutor` via adapter pattern with same order interface
+- Strategy logic remains unchanged between modes
 
 ## Development Notes
 

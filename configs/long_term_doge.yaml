@@ -1,0 +1,59 @@
+# 回测标的与周期
+symbol: "DOGE/USDT"         # DOGE 与 USDT 的交易对
+timeframe: "1m"             # 使用 1 分钟行情
+
+# 初始账户与手续费
+engine:
+  initial_balance: 10000    # 初始资金
+  maker_fee: 0.0002         # 挂单费率
+  taker_fee: 0.0005         # 吃单费率
+  leverage: 3               # 杠杆倍数
+
+# 历史数据配置
+data:
+  source: binance
+  use_testnet: true
+  limit: 1000
+  cache: "data/binance_testnet/dogeusdt_DOGE/USDT_1m_20250101_20251031.csv"  # 本地缓存
+
+# 回测时间窗口
+window:
+  start: "2025-01-01T00:00:00"
+  end: "2025-10-31T00:00:00"
+
+# 策略参数
+strategy:
+  timeframe: "1m"
+  drop_single_pct: 1.0      # 单根跌幅阈值
+  drop_window_pct: 3.0      # 窗口跌幅阈值
+  drop_window: 12           # 跌幅统计长度
+  delayed_trigger_pct: 0.7  # 日内低点延迟触发阈值
+  delayed_window_minutes: 360  # 信号有效时间
+  ema_fast: 13
+  ema_slow: 34
+  rsi_period: 14
+  rsi_oversold: 30.0
+  volume_short: 5
+  volume_long: 20
+  volume_recover_ratio: 1.10
+  volume_tick_ratio: 1.22
+  volatility_window: 30
+  min_signal: 92            # 最低信号分数
+  scale_multiplier: 0.22    # 资金放大系数
+  trail_step_pct: 0.25      # 移动止盈步长
+  layers:
+    - offset_pct: 1.1       # 第一层折价
+      size_ratio: 0.4
+    - offset_pct: 1.9
+      size_ratio: 0.35
+    - offset_pct: 2.7
+      size_ratio: 0.25
+  risk:
+    max_account_ratio: 0.035    # 最大资金使用比例
+    take_profit_pct: 0.9        # 固定止盈点
+    hard_stop_pct: 1.2          # 固定止损点
+    trailing_pct: 0.4           # 移动止盈回撤
+    trailing_activation_pct: 1.0  # 移动止盈激活
+    cooldown_minutes: 150       # 平仓冷静期
+    max_concurrent_trades: 1    # 并发仓位上限
+    max_hold_minutes: 480       # 持仓时间限制

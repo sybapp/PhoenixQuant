@@ -1,0 +1,59 @@
+# 回测标的与周期
+symbol: "BNB/USDT"          # BNB 与 USDT 的交易对
+timeframe: "1m"             # 使用 1 分钟级别数据
+
+# 基础账户设定
+engine:
+  initial_balance: 10000    # 初始资金
+  maker_fee: 0.0002         # 挂单费率
+  taker_fee: 0.0005         # 吃单费率
+  leverage: 3               # 杠杆倍数，可放大建仓规模
+
+# 数据源配置
+data:
+  source: binance
+  use_testnet: true
+  limit: 1000
+  cache: "data/binance_testnet/bnbusdt_BNB/USDT_1m_20250101_20251031.csv"  # 本地缓存路径
+
+# 时间窗口
+window:
+  start: "2025-01-01T00:00:00"
+  end: "2025-10-31T00:00:00"
+
+# 策略核心参数
+strategy:
+  timeframe: "1m"
+  drop_single_pct: 1.1      # 单根跌幅阈值
+  drop_window_pct: 3.6      # 窗口跌幅阈值
+  drop_window: 12           # 跌幅窗口长度
+  delayed_trigger_pct: 0.7  # 日内低点延迟触发阈值
+  delayed_window_minutes: 360  # 信号保留时长
+  ema_fast: 19
+  ema_slow: 50
+  rsi_period: 14
+  rsi_oversold: 25.0
+  volume_short: 5
+  volume_long: 20
+  volume_recover_ratio: 1.15
+  volume_tick_ratio: 1.32
+  volatility_window: 30
+  min_signal: 88            # 分数阈值
+  scale_multiplier: 0.35    # 资金放大系数
+  trail_step_pct: 0.3       # 移动止盈步长
+  layers:
+    - offset_pct: 1.2       # 第一层折价
+      size_ratio: 0.3       # 第一层权重
+    - offset_pct: 2.0
+      size_ratio: 0.35
+    - offset_pct: 3.0
+      size_ratio: 0.35
+  risk:
+    max_account_ratio: 0.05     # 资金敞口限制
+    take_profit_pct: 1.0        # 固定止盈点
+    hard_stop_pct: 1.5          # 硬止损点
+    trailing_pct: 0.5           # 移动止盈回撤
+    trailing_activation_pct: 1.2  # 移动止盈触发点
+    cooldown_minutes: 120       # 平仓冷静期
+    max_concurrent_trades: 1    # 并发仓位
+    max_hold_minutes: 600       # 最大持仓时间

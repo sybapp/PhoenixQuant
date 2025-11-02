@@ -1,0 +1,59 @@
+# 回测标的与基础周期
+symbol: "ETH/USDT"          # 以太坊对 USDT 的合约
+timeframe: "1m"             # 使用 1 分钟级别数据
+
+# 回测账户配置
+engine:
+  initial_balance: 10000    # 初始资金规模
+  maker_fee: 0.0002         # 挂单手续费
+  taker_fee: 0.0005         # 吃单手续费
+  leverage: 3               # 杠杆倍数，>1 表示可放大头寸
+
+# 数据配置
+data:
+  source: binance           # 数据源来自 Binance
+  use_testnet: true         # 按测试网规则处理
+  limit: 1000               # 分批抓取的最大K线数量
+  cache: "data/binance_testnet/ethusdt_ETH/USDT_1m_20250101_20251031.csv"  # 本地历史K线缓存
+
+# 回测时间范围
+window:
+  start: "2025-01-01T00:00:00"  # 开始时间
+  end: "2025-10-31T00:00:00"    # 结束时间
+
+# 策略参数
+strategy:
+  timeframe: "1m"           # 指标计算时间框
+  drop_single_pct: 0.8      # 单根跌幅阈值
+  drop_window_pct: 2.8      # 窗口累积跌幅阈值
+  drop_window: 12           # 跌幅统计长度
+  delayed_trigger_pct: 0.6  # 日内低点触发延迟值
+  delayed_window_minutes: 360  # 信号保留时长
+  ema_fast: 18              # 快速 EMA 周期
+  ema_slow: 48              # 慢速 EMA 周期
+  rsi_period: 14            # RSI 周期
+  rsi_oversold: 27.0        # RSI 超卖阈值
+  volume_short: 5           # 短期成交量窗口
+  volume_long: 20           # 长期成交量窗口
+  volume_recover_ratio: 1.12   # 成交量短均回升倍数
+  volume_tick_ratio: 1.30      # 单根成交量放大倍数
+  volatility_window: 30     # 波动率统计窗口
+  min_signal: 85            # 信号分数阈值
+  scale_multiplier: 0.4     # 资金放大系数
+  trail_step_pct: 0.25      # 移动止盈步长
+  layers:                   # 分层挂单构成
+    - offset_pct: 1.0       # 第一层偏离百分比
+      size_ratio: 0.3       # 第一层资金占比
+    - offset_pct: 1.8
+      size_ratio: 0.35
+    - offset_pct: 2.6
+      size_ratio: 0.35
+  risk:
+    max_account_ratio: 0.06     # 单次风险敞口
+    take_profit_pct: 1.1        # 固定止盈
+    hard_stop_pct: 1.6          # 硬止损
+    trailing_pct: 0.5           # 移动止盈回撤
+    trailing_activation_pct: 1.1  # 移动止盈激活点
+    cooldown_minutes: 90        # 冷静期
+    max_concurrent_trades: 1    # 并行仓位数
+    max_hold_minutes: 540       # 最大持仓时间
