@@ -42,7 +42,7 @@ class HistoricalDataLoader:
 
         if data_cfg.use_testnet and data_cfg.source.lower() == "binance":
             symbol_slug = self.config.symbol.replace("/", "").lower()
-            default_cache = Path("data") / "binance_testnet" / f"{symbol_slug}_{self.config.timeframe}.csv"
+            default_cache = Path("data") / "binance_testnet" / f"{symbol_slug}_{self.config.symbol}_{self.config.timeframe}_{self.config.window.start:%Y%m%d}_{self.config.window.end:%Y%m%d}.csv"
             data_cfg.cache = default_cache
             return default_cache
 
@@ -61,7 +61,7 @@ class HistoricalDataLoader:
         exchange_class = getattr(ccxt, exchange_id)
         exchange = exchange_class({"enableRateLimit": True})
         if exchange_id == "binance":
-            exchange.options = {"defaultType": "future"}
+            exchange.options["defaultType"] = "future"
             exchange.set_sandbox_mode(self.config.data.use_testnet)
 
         timeframe = self.config.timeframe

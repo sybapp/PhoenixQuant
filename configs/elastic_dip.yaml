@@ -12,8 +12,8 @@ data:
   limit: 1000
 
 window:
-  start: "2024-01-01T00:00:00"
-  end: "2024-01-07T00:00:00"
+  start: "2025-10-01T00:00:00"
+  end: "2025-10-31T00:00:00"
 
 strategy:
   timeframe: "1m"
