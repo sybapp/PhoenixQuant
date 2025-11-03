@@ -1,8 +1,6 @@
-# 实盘交易配置 - ETH/USDT
-# ⚠️ 警告：
-#   - 测试网模式请使用 testnet_example.yaml
-#   - 测试网不支持杠杆，leverage 必须设为 1
-#   - 实盘模式请谨慎操作
+# 双向自适应配置示例
+# 策略会自动根据市场情况选择做多或做空
+# ⚠️ 测试网不支持杠杆，leverage 必须设为 1
 
 symbol: "ETH/USDT"
 timeframe: "1m"
@@ -11,18 +9,16 @@ engine:
   initial_balance: 30
   maker_fee: 0.0002
   taker_fee: 0.0005
-  leverage: 3               # ⚠️ 杠杆倍数（测试网不支持，必须设为1）
+  leverage: 3               # ⚠️ 杠杆倍数（测试网必须设为1）
 
 data:
   source: binance
-  use_testnet: false        # false=真实网 | true=测试网
+  use_testnet: false
   limit: 1000
   cache: "data/binance_testnet/btcusdt_BTC/USDT_1m_20250101_20251031.csv"
 
 exchange:
   exchange_id: "binanceusdm"  # ccxt 交易所ID
-  # api_key: "kflCxmrjxzyNuaM60yvhFTCvFZBMRzCX2hniLLfEMycGJ2j2e6OMrsOE8Gzd5H7P" # 测试网
-  # secret: "Z9GOv6MoF2WQfi7iE21zkFliHzMJ1ENRtLixnvkp51lX4JA9jxsKnZ9ONak573An" # 测试网
   api_key: "mMCiSPV9dQKvXZZXfeexOfavazos5pgENIXeqfrW2A3JorHeGU75NR2CTUy0K1FD" # 真实网
   secret: "yamLenD3KFYnkFSz0A28dMS4Ykvo40fODKYdpIFZ2j8Sdl1xDHMJKbuTtNrL6z80" # 真实网
   password:
@@ -41,26 +37,29 @@ live:
 
 strategy:
   timeframe: "1m"
-  direction: "long"         # 交易方向: "long"(做多) / "short"(做空) / "both"(双向自适应)
-  drop_single_pct: 1.0
-  drop_window_pct: 3.0
+  direction: "both"         # 双向自适应模式！同时监控做多和做空信号
+  drop_single_pct: 1.0      # 单K变动阈值（做多检测跌幅，做空检测涨幅）
+  drop_window_pct: 3.0      # 窗口变动阈值
   drop_window: 12
   delayed_trigger_pct: 0.6
   delayed_window_minutes: 360
   ema_fast: 21
   ema_slow: 55
   rsi_period: 14
-  rsi_oversold: 25.0        # RSI超卖阈值（做多时使用）
-  rsi_overbought: 75.0      # RSI超买阈值（做空时使用）
+  rsi_oversold: 25.0        # RSI超卖阈值（做多信号）
+  rsi_overbought: 75.0      # RSI超买阈值（做空信号）
   volume_short: 5
   volume_long: 20
   volume_recover_ratio: 1.18
   volume_tick_ratio: 1.32
   volatility_window: 30
-  min_signal: 82
+  min_signal: 82            # 信号阈值（做多或做空信号需达到此值）
   scale_multiplier: 0.45
   trail_step_pct: 0.3
   layers:
+    # 双向模式：
+    # - 做多时，订单在当前价下方
+    # - 做空时，订单在当前价上方
     - offset_pct: 1.0
       size_ratio: 0.3
     - offset_pct: 1.8
@@ -68,11 +67,11 @@ strategy:
     - offset_pct: 2.6
       size_ratio: 0.35
   risk:
-    max_account_ratio: 0.07
+    max_account_ratio: 0.07   # 每次最多使用7%资金
     take_profit_pct: 1.1
     hard_stop_pct: 1.6
     trailing_pct: 0.5
     trailing_activation_pct: 1.1
     cooldown_minutes: 90
-    max_concurrent_trades: 1
+    max_concurrent_trades: 1  # 同时只持有一个方向的仓位
     max_hold_minutes: 600

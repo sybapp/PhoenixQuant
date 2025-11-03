@@ -6,6 +6,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Deque, Dict, Iterator, List, Optional, Type
 
@@ -102,6 +103,13 @@ class ExchangeExecutor:
         if not hasattr(ccxt, exchange_cfg.exchange_id):
             raise ValueError(f"不支持的交易所: {exchange_cfg.exchange_id}")
 
+        # 根据 market_type 自动调整配置
+        market_type = exchange_cfg.market_type.lower()
+        if market_type not in ["spot", "future"]:
+            raise ValueError(f"不支持的市场类型: {exchange_cfg.market_type}，必须是 'spot' 或 'future'")
+
+        self.market_type = market_type
+
         exchange_class = getattr(ccxt, exchange_cfg.exchange_id)
         init_kwargs: Dict[str, Any] = {
             "apiKey": exchange_cfg.api_key,
@@ -113,11 +121,38 @@ class ExchangeExecutor:
         init_kwargs.update(exchange_cfg.params)
 
         self.exchange: ccxt.Exchange = exchange_class(init_kwargs)
-        if exchange_cfg.options:
-            self.exchange.options.update(exchange_cfg.options)
 
+        # 设置市场类型
+        if not exchange_cfg.options:
+            exchange_cfg.options = {}
+        exchange_cfg.options["defaultType"] = market_type
+        self.exchange.options.update(exchange_cfg.options)
+
+        LOGGER.info("市场类型: %s | 杠杆: %.1fx", market_type.upper(), exchange_cfg.leverage)
+
+        # 沙盒/测试模式设置
+        # 注意：Binance 期货已废弃 testnet，改用 demo 模式（通过 options.demo = true）
         if data_cfg.use_testnet and hasattr(self.exchange, "set_sandbox_mode"):
-            self.exchange.set_sandbox_mode(True)
+            # 检查是否是 Binance 期货（已废弃 testnet）
+            if exchange_cfg.exchange_id in ["binanceusdm", "binancecoinm"]:
+                LOGGER.warning(
+                    "Binance 期货已废弃测试网模式！请使用 demo 模式：\n"
+                    "  1. 设置 data.use_testnet = false\n"
+                    "  2. 设置 exchange.options.demo = true\n"
+                    "  3. 使用真实网 API Key（demo 模式会模拟交易）"
+                )
+                # 不调用 set_sandbox_mode，避免报错
+            else:
+                # 其他交易所仍然支持 sandbox 模式
+                try:
+                    self.exchange.set_sandbox_mode(True)
+                    LOGGER.info("已启用沙盒模式（testnet）")
+                except Exception as exc:
+                    LOGGER.warning("启用沙盒模式失败: %s", exc)
+
+        # 检查是否启用了 demo 模式
+        if exchange_cfg.options and exchange_cfg.options.get("demo"):
+            LOGGER.info("✅ Demo 模式已启用（模拟交易，不会下真实订单）")
 
         LOGGER.info("加载交易所市场: %s", exchange_cfg.exchange_id)
         self.exchange.load_markets()
@@ -127,6 +162,9 @@ class ExchangeExecutor:
         return self.exchange.fetch_balance()
 
     def fetch_positions(self, symbol: str) -> Optional[Dict[str, Any]]:
+        if self.market_type == "spot":
+            LOGGER.debug("现货模式跳过 fetch_positions")
+            return None
         if not hasattr(self.exchange, "fetch_positions"):
             return None
         try:
@@ -141,13 +179,26 @@ class ExchangeExecutor:
                 return pos
         return None
 
-    def set_leverage(self, symbol: str, leverage: float) -> None:
-        if leverage <= 0 or not hasattr(self.exchange, "set_leverage"):
+    def set_leverage(self, symbol: str, leverage: float, market_type: str = "future") -> None:
+        """设置杠杆倍数（仅合约支持）"""
+        # 现货交易不支持杠杆
+        if market_type.lower() == "spot":
+            if leverage > 1.0:
+                LOGGER.warning("现货交易不支持杠杆，leverage 参数将被忽略")
+            return
+
+        # 合约交易杠杆设置
+        if leverage <= 1.0:
+            LOGGER.info("杠杆设置为 %.1f（无杠杆模式）", leverage)
+            return
+        if not hasattr(self.exchange, "set_leverage"):
+            LOGGER.warning("当前交易所不支持设置杠杆，将使用默认杠杆")
             return
         try:
             self.exchange.set_leverage(int(leverage), symbol)
+            LOGGER.info("成功设置杠杆: %dx for %s", int(leverage), symbol)
         except Exception as exc:  # pragma: no cover
-            LOGGER.warning("设置杠杆失败: %s", exc)
+            LOGGER.warning("设置杠杆失败（测试网通常不支持杠杆）: %s | 将以无杠杆模式运行", exc)
 
     # 下单 -------------------------------------------------------------
     def create_limit_order(
@@ -243,6 +294,12 @@ class LiveEngine:
     def _sync_balance(self) -> None:
         try:
             balance = self.executor.fetch_balance()
+        except ccxt.AuthenticationError as exc:  # type: ignore[attr-defined]  # pragma: no cover
+            LOGGER.warning(
+                "获取账户余额失败（认证失败）: %s | 请确认 API Key/Secret 是否正确、权限已启用，且环境与 use_testnet 设置匹配",
+                exc,
+            )
+            return
         except Exception as exc:  # pragma: no cover
             LOGGER.warning("获取账户余额失败: %s", exc)
             return
@@ -250,18 +307,33 @@ class LiveEngine:
         if isinstance(total, dict):
             cash = total.get(self.cash_currency)
             if isinstance(cash, (int, float)):
+                prev_balance = self.balance
                 self.balance = float(cash)
+                LOGGER.debug("账户余额同步: %.2f %s (变化: %+.2f)", self.balance, self.cash_currency, self.balance - prev_balance)
 
     def _sync_position(self) -> None:
         pos = self.executor.fetch_positions(self.symbol)
         if not pos:
+            if self.position.quantity != 0:
+                LOGGER.info("【持仓】已清空")
             self.position = LivePosition(self.symbol)
             return
         contracts = float(pos.get("contracts") or pos.get("contractSize") or pos.get("size") or 0.0)
         quantity = float(pos.get("positionAmt") or pos.get("amount") or contracts)
         entry_price = float(pos.get("entryPrice") or pos.get("average") or pos.get("avgPrice") or 0.0)
         margin = float(pos.get("margin") or pos.get("initialMargin") or 0.0)
+
+        prev_qty = self.position.quantity
         self.position = LivePosition(self.symbol, quantity=quantity, avg_price=entry_price, margin=margin)
+
+        if quantity != 0 and quantity != prev_qty:
+            current_price = self.current_prices.get(self.symbol, entry_price)
+            unrealized_pnl = (current_price - entry_price) * quantity if current_price and entry_price else 0
+            unrealized_pnl_pct = (unrealized_pnl / (abs(quantity) * entry_price) * 100) if entry_price and quantity else 0
+            LOGGER.info(
+                "【持仓】数量: %.4f | 均价: %.2f | 当前价: %.2f | 未实现盈亏: %.2f (%.2f%%)",
+                quantity, entry_price, current_price, unrealized_pnl, unrealized_pnl_pct
+            )
 
     def _sync_orders(self) -> None:
         try:
@@ -341,9 +413,120 @@ class LiveEngine:
     def disable_trading(self) -> None:
         self.trading_enabled = False
 
+    def _simulate_order_matching(self, symbol: str, candle: List[float]) -> None:
+        """DRY-RUN模式下的模拟订单撮合
+
+        Args:
+            symbol: 交易对
+            candle: [timestamp, open, high, low, close, volume]
+        """
+        if symbol != self.symbol:
+            return
+
+        high = float(candle[2])
+        low = float(candle[3])
+
+        filled_orders = []
+
+        for order_id, order in list(self.open_orders.items()):
+            if order.symbol != symbol or order.status != "pending":
+                continue
+
+            # 检查是否成交
+            filled = False
+            fill_price = order.price
+
+            if order.side == "buy":
+                # 买单：当前K线最低价 <= 订单价格时成交
+                if low <= order.price:
+                    filled = True
+                    fill_price = min(order.price, float(candle[1]))  # 使用开盘价或订单价格（取较小）
+            else:  # sell
+                # 卖单：当前K线最高价 >= 订单价格时成交
+                if high >= order.price:
+                    filled = True
+                    fill_price = max(order.price, float(candle[1]))  # 使用开盘价或订单价格（取较大）
+
+            if filled:
+                # 更新订单状态
+                order.status = "filled"
+                order.filled_qty = order.quantity
+                order.price = fill_price  # 使用实际成交价格
+
+                # 从挂单列表移除
+                self.open_orders.pop(order_id, None)
+                filled_orders.append(order)
+
+                # 更新持仓
+                self._update_position_from_fill(order)
+
+                LOGGER.info("【模拟成交】%s | %s %.4f @ %.2f | 标签: %s",
+                           symbol, order.side.upper(), order.quantity, fill_price, order.tag)
+
+        # 记录交易
+        for order in filled_orders:
+            self.trades.append(
+                Trade(
+                    timestamp=self.current_timestamp or int(time.time() * 1000),
+                    symbol=symbol,
+                    side=order.side,
+                    price=order.price,
+                    quantity=order.quantity,
+                    fee=0.0,  # DRY-RUN模式不收手续费
+                    tag=order.tag,
+                    pnl=0.0,
+                )
+            )
+
+    def _update_position_from_fill(self, order: Order) -> None:
+        """根据订单成交更新持仓"""
+        if order.side == "buy":
+            # 买入增加持仓（做多）
+            new_qty = self.position.quantity + order.quantity
+            if self.position.quantity == 0:
+                self.position.avg_price = order.price
+            else:
+                # 加仓：重新计算平均价格
+                total_value = self.position.quantity * self.position.avg_price + order.quantity * order.price
+                self.position.avg_price = total_value / new_qty if new_qty != 0 else 0.0
+            self.position.quantity = new_qty
+        else:  # sell
+            # 卖出减少持仓（如果有多仓）或建立空仓
+            new_qty = self.position.quantity - order.quantity
+            if self.position.quantity == 0:
+                # 开空仓
+                self.position.avg_price = order.price
+                self.position.quantity = -order.quantity
+            elif self.position.quantity > 0:
+                # 平多仓
+                if new_qty >= 0:
+                    self.position.quantity = new_qty
+                else:
+                    # 平多后反手开空
+                    self.position.avg_price = order.price
+                    self.position.quantity = new_qty
+            else:
+                # 加空仓
+                total_value = abs(self.position.quantity) * self.position.avg_price + order.quantity * order.price
+                self.position.avg_price = total_value / abs(new_qty) if new_qty != 0 else 0.0
+                self.position.quantity = new_qty
+
+        self.position.updated_at = time.time()
+
     def update_market(self, symbol: str, candle: List[float]) -> None:
         self.current_timestamp = int(candle[0])
         self.current_prices[symbol] = float(candle[4])
+
+        # 输出市场数据更新
+        ts = datetime.fromtimestamp(int(candle[0]) / 1000).strftime("%Y-%m-%d %H:%M:%S")
+        LOGGER.info(
+            "市场更新 | 时间: %s | 价格: O=%.2f H=%.2f L=%.2f C=%.2f | 成交量: %.2f",
+            ts, candle[1], candle[2], candle[3], candle[4], candle[5]
+        )
+
+        # DRY-RUN模式下的模拟撮合
+        if not self.trading_enabled:
+            self._simulate_order_matching(symbol, candle)
 
     def submit_limit_order(
         self,
@@ -356,8 +539,8 @@ class LiveEngine:
         reduce_only: bool = False,
     ) -> Order:
         if not self.trading_enabled:
-            LOGGER.debug("交易关闭，跳过限价单 %s %s@%s", side, quantity, price)
-            return self._placeholder_order(symbol, side, quantity, price, tag, status="skipped")
+            LOGGER.info("【DRY-RUN】限价单 | %s | %s %.4f @ %.2f | 标签: %s", symbol, side.upper(), quantity, price, tag)
+            return self._placeholder_order(symbol, side, quantity, price, tag, status="pending")
         params = {"reduceOnly": reduce_only} if reduce_only else {}
         response = self.executor.create_limit_order(symbol, side, quantity, price, params)
         order = self._build_order(response, tag=tag)
@@ -365,6 +548,8 @@ class LiveEngine:
         self.orders[order.order_id] = order
         if order.status == "open":
             self.open_orders[order.order_id] = order
+        LOGGER.info("【订单创建】限价单 | ID: %s | %s %s %.4f @ %.2f | 标签: %s",
+                   order.order_id, symbol, side.upper(), quantity, price, tag)
         return order
 
     def submit_market_order(
@@ -376,8 +561,9 @@ class LiveEngine:
         tag: str = "",
     ) -> Order:
         if not self.trading_enabled:
-            LOGGER.debug("交易关闭，跳过市价单 %s %s", side, quantity)
-            return self._placeholder_order(symbol, side, quantity, self.current_prices.get(symbol, 0.0), tag, status="skipped")
+            price = self.current_prices.get(symbol, 0.0)
+            LOGGER.info("【DRY-RUN】市价单 | %s | %s %.4f @ ~%.2f | 标签: %s", symbol, side.upper(), quantity, price, tag)
+            return self._placeholder_order(symbol, side, quantity, price, tag, status="skipped")
 
         response = self.executor.create_market_order(symbol, side, quantity)
         order = self._build_order(response, tag=tag)
@@ -385,18 +571,27 @@ class LiveEngine:
         self.orders[order.order_id] = order
         if order.status != "open":
             self._append_trade(response, tag)
+        LOGGER.info("【订单成交】市价单 | ID: %s | %s %s %.4f @ %.2f | 标签: %s",
+                   order.order_id, symbol, side.upper(), quantity, order.price, tag)
         return order
 
     def cancel_orders(self, *, tag_prefix: Optional[str] = None) -> None:
+        canceled_count = 0
         for order in list(self.open_orders.values()):
             if tag_prefix and not order.tag.startswith(tag_prefix):
                 continue
             try:
-                self.executor.cancel_order(order.order_id, self.symbol)
+                if self.trading_enabled:
+                    self.executor.cancel_order(order.order_id, self.symbol)
                 order.status = "canceled"
                 self.open_orders.pop(order.order_id, None)
+                canceled_count += 1
+                LOGGER.debug("【撤单】ID: %s | 标签: %s | 价格: %.2f", order.order_id, order.tag, order.price)
             except Exception as exc:  # pragma: no cover
                 LOGGER.warning("撤单失败 %s: %s", order.order_id, exc)
+        if canceled_count > 0:
+            prefix_info = f"标签前缀={tag_prefix}" if tag_prefix else "全部"
+            LOGGER.info("【批量撤单】已撤销 %d 个订单 | %s", canceled_count, prefix_info)
 
     def close_position(self, symbol: str, *, portion: float = 1.0, tag: str = "exit") -> Optional[Order]:
         if self.position.quantity == 0:
@@ -467,6 +662,9 @@ class LiveEngine:
             status=status,
         )
         self.orders[order.order_id] = order
+        # DRY-RUN模式下的挂单也应该添加到 open_orders 中以便跟踪
+        if status == "pending":
+            self.open_orders[order.order_id] = order
         return order
 
 # ----------------------------------------------------------------------
@@ -478,7 +676,7 @@ class LiveTrader:
     def __init__(self, config: LiveTradingConfig, strategy_cls: Type[ElasticDipStrategy] = ElasticDipStrategy) -> None:
         self.config = config
         self.executor = ExchangeExecutor(config.exchange, config.data)
-        self.executor.set_leverage(config.symbol, config.engine.leverage)
+        self.executor.set_leverage(config.symbol, config.engine.leverage, config.exchange.market_type)
 
         self.engine = LiveEngine(self.executor, config.symbol, config.engine)
         self.strategy = strategy_cls(self.engine, config.symbol, config.strategy)
@@ -510,19 +708,68 @@ class LiveTrader:
         self.warmup()
         self.engine.sync()
 
+        LOGGER.info("=" * 80)
         LOGGER.info("开始实盘循环: %s %s", self.config.symbol, self.config.timeframe)
+        LOGGER.info("交易模式: %s", "DRY-RUN（模拟）" if not self.engine.trading_enabled else "实盘交易")
+        LOGGER.info("初始余额: %.2f USDT", self.engine.balance)
+        LOGGER.info("=" * 80)
+
+        bar_count = 0
+        last_heartbeat = time.time()
+        heartbeat_interval = self.config.settings.heartbeat_interval if hasattr(self.config.settings, 'heartbeat_interval') else 120
+
         try:
             for candle in self.feed.stream():
                 start = time.time()
+                bar_count += 1
+
                 self.engine.update_market(self.config.symbol, candle)
                 self.engine.sync()
                 self.strategy.on_bar(candle)
                 self.engine.sync()
-                LOGGER.debug("处理bar耗时 %.3fs", time.time() - start)
+
+                elapsed = time.time() - start
+                LOGGER.debug("处理bar耗时 %.3fs", elapsed)
+
+                # 心跳日志
+                if time.time() - last_heartbeat >= heartbeat_interval:
+                    self._log_heartbeat(bar_count)
+                    last_heartbeat = time.time()
+
         except KeyboardInterrupt:
             LOGGER.info("收到中断信号，准备停止...")
         finally:
             self.shutdown()
+
+    def _log_heartbeat(self, bar_count: int) -> None:
+        """输出心跳日志，显示系统运行状态"""
+        equity = self.engine.get_total_equity(self.config.symbol)
+        position = self.engine.position
+        open_orders = len(self.engine.open_orders)
+
+        LOGGER.info("=" * 80)
+        LOGGER.info("【心跳】已处理 %d 根K线", bar_count)
+        LOGGER.info("【账户】权益: %.2f USDT | 余额: %.2f USDT | 收益率: %+.2f%%",
+                   equity, self.engine.balance, (equity / self.config.engine.initial_balance - 1) * 100)
+
+        if position.quantity != 0:
+            current_price = self.engine.current_prices.get(self.config.symbol, position.avg_price)
+            unrealized = (current_price - position.avg_price) * position.quantity
+            unrealized_pct = (unrealized / (abs(position.quantity) * position.avg_price) * 100) if position.avg_price else 0
+            LOGGER.info("【持仓】数量: %.4f | 均价: %.2f | 当前价: %.2f | 未实现: %.2f (%.2f%%)",
+                       position.quantity, position.avg_price, current_price, unrealized, unrealized_pct)
+        else:
+            LOGGER.info("【持仓】空仓")
+
+        LOGGER.info("【订单】挂单数量: %d", open_orders)
+        LOGGER.info("【策略】状态: %s", self.strategy.state)
+
+        if self.strategy.cooldown_until:
+            remaining = (self.strategy.cooldown_until - datetime.now()).total_seconds() / 60
+            if remaining > 0:
+                LOGGER.info("【冷却】剩余 %.1f 分钟", remaining)
+
+        LOGGER.info("=" * 80)
 
     def shutdown(self) -> None:
         LOGGER.info("实盘调度器已停止，刷新账户状态")

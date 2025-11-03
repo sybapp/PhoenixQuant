@@ -1,0 +1,83 @@
+# Binance Demo 模式配置（替代已废弃的测试网）
+# 重要说明：
+# ⚠️ Binance 已于 2024 年废弃期货测试网（testnet.binancefuture.com）
+# 现在使用 Demo 模式进行模拟交易：
+# 1. Demo 模式需要使用真实网 API Key（但会模拟交易，不会下真实订单）
+# 2. 获取 API Key: https://www.binance.com/zh-CN/my/settings/api-management
+# 3. 设置 use_testnet = false, options.demo = true
+# 4. Demo 模式支持无杠杆交易
+
+symbol: "ETH/USDT"
+timeframe: "1m"
+
+engine:
+  initial_balance: 10000    # Demo 模式初始余额（仅用于计算）
+  maker_fee: 0.0002
+  taker_fee: 0.0005
+  leverage: 1               # ⚠️ Demo 模式建议使用无杠杆（1）
+
+data:
+  source: binance
+  use_testnet: false        # ⚠️ 改为 false！Binance 期货已废弃 testnet
+  limit: 1000
+
+exchange:
+  exchange_id: "binanceusdm"
+  # ⚠️ 使用真实网 API Key（不是测试网！）
+  # 从 https://www.binance.com/zh-CN/my/settings/api-management 获取
+  # 注意：这里仍然填的是测试网 key，需要换成真实网 key
+  api_key: "kflCxmrjxzyNuaM60yvhFTCvFZBMRzCX2hniLLfEMycGJ2j2e6OMrsOE8Gzd5H7P"
+  secret: "Z9GOv6MoF2WQfi7iE21zkFliHzMJ1ENRtLixnvkp51lX4JA9jxsKnZ9ONak573An"
+  password:
+  enable_rate_limit: true
+  market_type: "future"     # 市场类型: "spot"(现货) 或 "future"(合约)
+  options:
+    defaultType: "future"
+    demo: true              # ⚠️ 启用 Demo 模式（模拟交易，不下真实订单）
+  params: {}
+
+live:
+  poll_interval: 30
+  warmup_bars: 800
+  backfill_limit: 1200
+  enable_trading: false     # 初次测试建议先 dry-run
+  dry_run: true             # 干跑模式：不下真实订单
+  heartbeat_interval: 120
+
+strategy:
+  timeframe: "1m"
+  direction: "both"         # 双向自适应: "long" / "short" / "both"
+  drop_single_pct: 1.0
+  drop_window_pct: 3.0
+  drop_window: 12
+  delayed_trigger_pct: 0.6
+  delayed_window_minutes: 360
+  ema_fast: 21
+  ema_slow: 55
+  rsi_period: 14
+  rsi_oversold: 25.0
+  rsi_overbought: 75.0
+  volume_short: 5
+  volume_long: 20
+  volume_recover_ratio: 1.18
+  volume_tick_ratio: 1.32
+  volatility_window: 30
+  min_signal: 82
+  scale_multiplier: 0.45    # 由于无杠杆，可适当增加此参数（如 0.6-1.0）
+  trail_step_pct: 0.3
+  layers:
+    - offset_pct: 1.0
+      size_ratio: 0.3
+    - offset_pct: 1.8
+      size_ratio: 0.35
+    - offset_pct: 2.6
+      size_ratio: 0.35
+  risk:
+    max_account_ratio: 0.15  # 无杠杆时可适当提高使用比例
+    take_profit_pct: 1.1
+    hard_stop_pct: 1.6
+    trailing_pct: 0.5
+    trailing_activation_pct: 1.1
+    cooldown_minutes: 90
+    max_concurrent_trades: 1
+    max_hold_minutes: 600

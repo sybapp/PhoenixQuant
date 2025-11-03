@@ -1,0 +1,76 @@
+# Binance 合约交易配置（Demo 模式）
+# 合约特点：
+# - 支持杠杆（真实网支持，测试网不支持）
+# - 可做多做空
+# - 风险较高
+
+symbol: "ETH/USDT"
+timeframe: "1m"
+
+engine:
+  initial_balance: 10000
+  maker_fee: 0.0002         # 合约手续费较低
+  taker_fee: 0.0005
+  leverage: 3               # 合约可用杠杆（Demo 模式下建议 1-3）
+
+data:
+  source: binance
+  use_testnet: false        # Demo 模式，use_testnet = false
+  limit: 1000
+
+exchange:
+  exchange_id: "binanceusdm"  # 合约使用 "binanceusdm"（USDT 本位）或 "binancecoinm"（币本位）
+  api_key: "YOUR_API_KEY"
+  secret: "YOUR_SECRET"
+  password:
+  enable_rate_limit: true
+  market_type: "future"     # ⚠️ 合约模式
+  options:
+    demo: true              # Demo 模式
+  params: {}
+
+live:
+  poll_interval: 30
+  warmup_bars: 800
+  backfill_limit: 1200
+  enable_trading: false
+  dry_run: true
+  heartbeat_interval: 120
+
+strategy:
+  timeframe: "1m"
+  direction: "both"         # 合约支持双向交易
+  drop_single_pct: 1.0
+  drop_window_pct: 3.0
+  drop_window: 12
+  delayed_trigger_pct: 0.6
+  delayed_window_minutes: 360
+  ema_fast: 21
+  ema_slow: 55
+  rsi_period: 14
+  rsi_oversold: 25.0
+  rsi_overbought: 75.0
+  volume_short: 5
+  volume_long: 20
+  volume_recover_ratio: 1.18
+  volume_tick_ratio: 1.32
+  volatility_window: 30
+  min_signal: 82
+  scale_multiplier: 0.45    # 使用杠杆时保持保守
+  trail_step_pct: 0.3
+  layers:
+    - offset_pct: 1.0
+      size_ratio: 0.3
+    - offset_pct: 1.8
+      size_ratio: 0.35
+    - offset_pct: 2.6
+      size_ratio: 0.35
+  risk:
+    max_account_ratio: 0.1   # 使用杠杆时降低使用比例
+    take_profit_pct: 1.1
+    hard_stop_pct: 1.6
+    trailing_pct: 0.5
+    trailing_activation_pct: 1.1
+    cooldown_minutes: 90
+    max_concurrent_trades: 1
+    max_hold_minutes: 600

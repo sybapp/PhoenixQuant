@@ -45,6 +45,7 @@ class ExchangeConfig:
     options: Dict[str, Any] = field(default_factory=dict)
     params: Dict[str, Any] = field(default_factory=dict)
     leverage: float = 1.0
+    market_type: str = "future"  # 市场类型: "spot"(现货) 或 "future"(合约)
 
 
 @dataclass
@@ -93,6 +94,8 @@ class StrategyConfig:
     risk: RiskConfig = field(default_factory=RiskConfig)
     scale_multiplier: float = 1.0
     trail_step_pct: float = 0.3
+    direction: str = "long"  # 交易方向: "long"(做多) / "short"(做空) / "both"(双向自适应)
+    rsi_overbought: float = 75.0  # RSI超买阈值（做空时使用）
 
 
 @dataclass

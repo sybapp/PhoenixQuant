@@ -1,8 +1,6 @@
-# 实盘交易配置 - ETH/USDT
-# ⚠️ 警告：
-#   - 测试网模式请使用 testnet_example.yaml
-#   - 测试网不支持杠杆，leverage 必须设为 1
-#   - 实盘模式请谨慎操作
+# 做空配置示例
+# 在价格上涨过热时做空
+# ⚠️ 测试网不支持杠杆，leverage 必须设为 1
 
 symbol: "ETH/USDT"
 timeframe: "1m"
@@ -11,11 +9,11 @@ engine:
   initial_balance: 30
   maker_fee: 0.0002
   taker_fee: 0.0005
-  leverage: 3               # ⚠️ 杠杆倍数（测试网不支持，必须设为1）
+  leverage: 3               # ⚠️ 杠杆倍数（测试网必须设为1）
 
 data:
   source: binance
-  use_testnet: false        # false=真实网 | true=测试网
+  use_testnet: false
   limit: 1000
   cache: "data/binance_testnet/btcusdt_BTC/USDT_1m_20250101_20251031.csv"
 
@@ -23,8 +21,8 @@ exchange:
   exchange_id: "binanceusdm"  # ccxt 交易所ID
   # api_key: "kflCxmrjxzyNuaM60yvhFTCvFZBMRzCX2hniLLfEMycGJ2j2e6OMrsOE8Gzd5H7P" # 测试网
   # secret: "Z9GOv6MoF2WQfi7iE21zkFliHzMJ1ENRtLixnvkp51lX4JA9jxsKnZ9ONak573An" # 测试网
-  api_key: "mMCiSPV9dQKvXZZXfeexOfavazos5pgENIXeqfrW2A3JorHeGU75NR2CTUy0K1FD" # 真实网
-  secret: "yamLenD3KFYnkFSz0A28dMS4Ykvo40fODKYdpIFZ2j8Sdl1xDHMJKbuTtNrL6z80" # 真实网
+  api_key: "YOUR_API_KEY_HERE"
+  secret: "YOUR_SECRET_HERE"
   password:
   enable_rate_limit: true
   options:
@@ -41,9 +39,9 @@ live:
 
 strategy:
   timeframe: "1m"
-  direction: "long"         # 交易方向: "long"(做多) / "short"(做空) / "both"(双向自适应)
-  drop_single_pct: 1.0
-  drop_window_pct: 3.0
+  direction: "short"        # 做空模式 (可选: "long"做多 / "short"做空 / "both"双向自适应)
+  drop_single_pct: 1.0      # 单K涨幅阈值（做空时检测涨幅）
+  drop_window_pct: 3.0      # 窗口涨幅阈值
   drop_window: 12
   delayed_trigger_pct: 0.6
   delayed_window_minutes: 360
@@ -57,15 +55,16 @@ strategy:
   volume_recover_ratio: 1.18
   volume_tick_ratio: 1.32
   volatility_window: 30
-  min_signal: 82
+  min_signal: 82            # 信号阈值
   scale_multiplier: 0.45
   trail_step_pct: 0.3
   layers:
-    - offset_pct: 1.0
+    # 做空时，订单价格在当前价上方
+    - offset_pct: 1.0       # 当前价上方1%处挂空单
       size_ratio: 0.3
-    - offset_pct: 1.8
+    - offset_pct: 1.8       # 当前价上方1.8%处挂空单
       size_ratio: 0.35
-    - offset_pct: 2.6
+    - offset_pct: 2.6       # 当前价上方2.6%处挂空单
       size_ratio: 0.35
   risk:
     max_account_ratio: 0.07
